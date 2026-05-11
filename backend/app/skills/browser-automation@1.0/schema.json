@@ -1,0 +1,21 @@
+{
+  "slug": "browser-automation",
+  "name": "Browser Automation Agent",
+  "version": "1.0",
+  "description": "Allows the agent to control a headless web browser to scrape sites, fill forms, and interact with web apps without APIs.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "target_url": {
+        "type": "string",
+        "description": "The URL to navigate to."
+      },
+      "objective": {
+        "type": "string",
+        "description": "What the agent needs to accomplish on the page (e.g. 'find contact email', 'fill out lead form')."
+      }
+    },
+    "required": ["target_url", "objective"]
+  },
+  "is_active": false
+}

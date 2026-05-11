@@ -1,0 +1,28 @@
+{
+  "slug": "market-analysis",
+  "name": "Market/Biznes Tahlil Agent",
+  "description": "SWOT, target audience, raqobatchilar, positioning va pitch outline tayyorlaydi.",
+  "category": "business",
+  "icon": "M",
+  "capabilities": [
+    "SWOT",
+    "Target audience",
+    "Raqobatchi tahlili",
+    "Positioning",
+    "Pitch outline"
+  ],
+  "input_schema": [
+    { "name": "business_name", "label": "Biznes nomi", "type": "input", "required": true, "placeholder": "Masalan: UstaiTech Academy" },
+    { "name": "industry", "label": "Soha", "type": "input", "required": true, "placeholder": "Masalan: IT ta'lim" },
+    { "name": "target_market", "label": "Maqsad bozor", "type": "textarea", "required": true, "placeholder": "Kimlar uchun, qaysi shahar yoki segment?" },
+    { "name": "analysis_type", "label": "Tahlil turi", "type": "select", "required": true, "options": ["SWOT", "Target audience", "Raqobatchi tahlili", "Pitch outline", "To'liq tahlil"] },
+    { "name": "goal", "label": "Maqsad", "type": "textarea", "required": false, "placeholder": "Masalan: yangi filial ochish yoki investor pitch tayyorlash" }
+  ],
+  "welcome_message": "Biznesingiz haqida ma'lumot bering, men bozor va strategiyani tahlil qilaman.",
+  "price_monthly": 79000,
+  "max_tokens_per_task": 3200,
+  "daily_limit": 10,
+  "ai_model": "deepseek-chat",
+  "temperature": 0.55,
+  "sort_order": 3
+}

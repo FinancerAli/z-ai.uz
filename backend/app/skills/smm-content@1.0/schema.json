@@ -1,0 +1,81 @@
+{
+  "slug": "smm-content",
+  "version": "1.0",
+  "name": "SMM Kontent Agent",
+  "description": "Telegram, Instagram va reklama uchun post, caption, sotuv matni va kontent reja tayyorlaydi.",
+  "category": "marketing",
+  "icon": "S",
+  "capabilities": [
+    "SMM post",
+    "Caption",
+    "Reklama matni",
+    "Kontent reja",
+    "Hashtag va CTA"
+  ],
+  "input_schema": {
+    "version": 1,
+    "fields": [
+      {
+        "name": "topic",
+        "label": "Mavzu yoki mahsulot",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Masalan: IELTS kursi uchun yangi guruhga qabul posti"
+      },
+      {
+        "name": "platform",
+        "label": "Platforma",
+        "type": "select",
+        "required": true,
+        "options": [
+          "Telegram",
+          "Instagram",
+          "Reklama",
+          "Kontent reja"
+        ]
+      },
+      {
+        "name": "tone",
+        "label": "Uslub",
+        "type": "select",
+        "required": true,
+        "options": [
+          "Samimiy",
+          "Sotuvga yo'naltirilgan",
+          "Professional",
+          "Trend"
+        ]
+      },
+      {
+        "name": "length",
+        "label": "Uzunlik",
+        "type": "select",
+        "required": true,
+        "options": [
+          "Qisqa",
+          "O'rtacha",
+          "Batafsil"
+        ]
+      },
+      {
+        "name": "audience",
+        "label": "Auditoriya",
+        "type": "input",
+        "required": false,
+        "placeholder": "Masalan: 18-25 yosh talabalar"
+      }
+    ]
+  },
+  "welcome_message": "SMM post, caption, reklama matni yoki kontent reja uchun ma'lumotlarni to'ldiring.",
+  "price_daily": 0,
+  "price_weekly": 0,
+  "price_monthly": 49000,
+  "max_tokens_per_task": 2200,
+  "daily_limit": 10,
+  "supports_multi_turn": false,
+  "ai_model": "deepseek-chat",
+  "temperature": 0.8,
+  "is_active": true,
+  "is_featured": true,
+  "sort_order": 1
+}

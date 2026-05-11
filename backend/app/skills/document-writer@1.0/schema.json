@@ -1,0 +1,27 @@
+{
+  "slug": "document-writer",
+  "name": "Hujjat Tahlil Agent",
+  "description": "Matn va hujjatlarni tahlil qiladi, xulosa, risklar, tarjima va rasmiy matn tayyorlaydi.",
+  "category": "business",
+  "icon": "D",
+  "capabilities": [
+    "Hujjat xulosasi",
+    "Risk tahlili",
+    "Tarjima",
+    "Rasmiy matn",
+    "Shartnoma bandlari"
+  ],
+  "input_schema": [
+    { "name": "document_text", "label": "Hujjat matni", "type": "textarea", "required": true, "placeholder": "Hujjat yoki shartnoma matnini shu yerga joylang" },
+    { "name": "output_type", "label": "Natija turi", "type": "select", "required": true, "options": ["Xulosa", "Risk tahlili", "Tarjima", "Rasmiylashtirish", "Savol-javob"] },
+    { "name": "language", "label": "Til", "type": "select", "required": true, "options": ["O'zbek", "Rus", "Ingliz"] },
+    { "name": "extra_instruction", "label": "Qo'shimcha talab", "type": "textarea", "required": false, "placeholder": "Masalan: asosiy majburiyatlarni alohida ajrat" }
+  ],
+  "welcome_message": "Hujjat matnini kiriting va qanday natija kerakligini tanlang.",
+  "price_monthly": 99000,
+  "max_tokens_per_task": 3000,
+  "daily_limit": 10,
+  "ai_model": "deepseek-chat",
+  "temperature": 0.35,
+  "sort_order": 2
+}

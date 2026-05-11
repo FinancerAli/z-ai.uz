@@ -1,0 +1,321 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ========================================
+   ZAI Brand — Light (default)
+   Primary: Purple #6C3BFF
+   Telegram tema sinxronizatsiya uchun
+   .dark class Telegram darkda auto qo'shiladi
+   ======================================== */
+:root {
+  --background: oklch(0.98 0.005 270);
+  --foreground: oklch(0.14 0.005 285);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.14 0.005 285);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.14 0.005 285);
+  --primary: oklch(0.49 0.27 270);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.95 0.02 270);
+  --secondary-foreground: oklch(0.25 0.02 270);
+  --muted: oklch(0.95 0.01 270);
+  --muted-foreground: oklch(0.55 0.02 270);
+  --accent: oklch(0.93 0.03 270);
+  --accent-foreground: oklch(0.25 0.02 270);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.91 0.01 270);
+  --input: oklch(0.91 0.01 270);
+  --ring: oklch(0.49 0.27 270);
+  --chart-1: oklch(0.49 0.27 270);
+  --chart-2: oklch(0.6 0.2 200);
+  --chart-3: oklch(0.65 0.18 150);
+  --chart-4: oklch(0.7 0.15 60);
+  --chart-5: oklch(0.6 0.22 330);
+  --radius: 0.75rem;
+  --sidebar: oklch(0.97 0.005 270);
+  --sidebar-foreground: oklch(0.14 0.005 285);
+  --sidebar-primary: oklch(0.49 0.27 270);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.93 0.03 270);
+  --sidebar-accent-foreground: oklch(0.25 0.02 270);
+  --sidebar-border: oklch(0.91 0.01 270);
+  --sidebar-ring: oklch(0.49 0.27 270);
+}
+
+/* Telegram dark mode sinxronizatsiya */
+.dark {
+  --background: oklch(0.13 0.01 270);
+  --foreground: oklch(0.97 0.005 270);
+  --card: oklch(0.18 0.015 270);
+  --card-foreground: oklch(0.97 0.005 270);
+  --popover: oklch(0.18 0.015 270);
+  --popover-foreground: oklch(0.97 0.005 270);
+  --primary: oklch(0.62 0.25 270);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.22 0.02 270);
+  --secondary-foreground: oklch(0.95 0.01 270);
+  --muted: oklch(0.22 0.015 270);
+  --muted-foreground: oklch(0.65 0.02 270);
+  --accent: oklch(0.25 0.03 270);
+  --accent-foreground: oklch(0.95 0.01 270);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.28 0.02 270);
+  --input: oklch(0.25 0.015 270);
+  --ring: oklch(0.62 0.25 270);
+  --chart-1: oklch(0.62 0.25 270);
+  --chart-2: oklch(0.55 0.2 200);
+  --chart-3: oklch(0.6 0.18 150);
+  --chart-4: oklch(0.65 0.15 60);
+  --chart-5: oklch(0.55 0.22 330);
+  --sidebar: oklch(0.16 0.01 270);
+  --sidebar-foreground: oklch(0.97 0.005 270);
+  --sidebar-primary: oklch(0.62 0.25 270);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.22 0.02 270);
+  --sidebar-accent-foreground: oklch(0.95 0.01 270);
+  --sidebar-border: oklch(0.28 0.02 270);
+  --sidebar-ring: oklch(0.62 0.25 270);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  html {
+    @apply font-sans;
+    --tg-viewport-height: 100vh;
+    --tg-viewport-stable-height: 100vh;
+  }
+}
+
+/* ========================================
+   Magic UI — Shimmer Button
+   ======================================== */
+@keyframes shimmer-slide {
+  to { transform: translateX(100%); }
+}
+@keyframes spin-around {
+  0% { transform: translateZ(0) rotate(0); }
+  15%, 35% { transform: translateZ(0) rotate(90deg); }
+  65%, 85% { transform: translateZ(0) rotate(270deg); }
+  100% { transform: translateZ(0) rotate(360deg); }
+}
+
+/* ========================================
+   Magic UI — Border Beam
+   ======================================== */
+@keyframes border-beam {
+  0% { offset-distance: 0%; }
+  100% { offset-distance: 100%; }
+}
+
+/* ========================================
+   Animated Beam
+   ======================================== */
+@keyframes beam-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ========================================
+   ZAI Custom Utilities
+   ======================================== */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes counting {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+.animate-counting {
+  animation: counting 0.4s ease-out forwards;
+}
+
+/* Telegram Mini App bottom safe area */
+.pb-safe {
+  padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+/* pb-safe-tg: Telegram native BottomButton uchun */
+.pb-safe-tg {
+  padding-bottom: calc(80px + var(--safe-bottom, 0px) + var(--content-safe-bottom, 0px));
+}
+
+/* Scrollbar minimal */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: oklch(0.8 0 0); border-radius: 4px; }
+.dark ::-webkit-scrollbar-thumb { background: oklch(0.3 0 0); }
+
+/* ==========================================
+   Telegram SafeArea & Native CSS Variables
+   use-telegram.ts tomonidan dinamik o'rnatiladi
+   ========================================== */
+:root {
+  --safe-top:    0px;
+  --safe-bottom: 0px;
+  --safe-left:   0px;
+  --safe-right:  0px;
+  --content-safe-top:    0px;
+  --content-safe-bottom: 0px;
+
+  /* Telegram Theme vars (use-telegram.ts tomonidan yangilanadi) */
+  --tg-bg:           transparent;
+  --tg-text:         inherit;
+  --tg-button:       oklch(0.49 0.27 270);
+  --tg-button-text:  #ffffff;
+  --tg-secondary-bg: oklch(0.95 0.02 270);
+  --tg-header-bg:    oklch(0.49 0.27 270);
+  --tg-hint:         oklch(0.55 0.02 270);
+  --tg-destructive:  oklch(0.577 0.245 27.325);
+}
+
+/* Header Telegram rangi bilan avto-mos kelish */
+.tg-header {
+  background-color: var(--tg-header-bg, oklch(0.49 0.27 270));
+  padding-top: calc(var(--content-safe-top) + 12px);
+}
+
+/* ==========================================
+   Feedback Buttons (👍 / 👎 / 🔄)
+   ========================================== */
+.feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.18s ease;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted-foreground);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.feedback-btn:active {
+  transform: scale(0.94);
+}
+
+.feedback-btn.good.active  { border-color: #22c55e; color: #22c55e; background: rgba(34,197,94,0.08); }
+.feedback-btn.bad.active   { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,0.08); }
+.feedback-btn.redo.active  { border-color: #f59e0b; color: #f59e0b; background: rgba(245,158,11,0.08); }
+
+/* ==========================================
+   ZAI Skeleton Loader
+   ========================================== */
+@keyframes zai-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    oklch(0.92 0 0) 25%,
+    oklch(0.96 0 0) 50%,
+    oklch(0.92 0 0) 75%
+  );
+  background-size: 200% 100%;
+  animation: zai-shimmer 1.4s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+.dark .skeleton {
+  background: linear-gradient(
+    90deg,
+    oklch(0.22 0 0) 25%,
+    oklch(0.26 0 0) 50%,
+    oklch(0.22 0 0) 75%
+  );
+  background-size: 200% 100%;
+}
+
+/* ==========================================
+   ZAI Result Card — Natija oynasi
+   ========================================== */
+.result-card {
+  border-radius: 16px;
+  border: 1.5px solid var(--border);
+  padding: 16px;
+  background: var(--card);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.result-card:hover {
+  box-shadow: 0 4px 20px rgba(108, 59, 255, 0.08);
+}
+
+/* Copy success flash */
+@keyframes copy-flash {
+  0%   { background: rgba(34, 197, 94, 0.15); }
+  100% { background: transparent; }
+}
+
+.copy-flash {
+  animation: copy-flash 0.6s ease-out;
+}
