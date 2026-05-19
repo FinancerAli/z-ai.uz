@@ -264,8 +264,39 @@ export function AgentPurchaseFlow({
       setError("Sotib olish so'rovi topilmadi");
       return;
     }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await fetchWithAuth(`/api/payments/click/manual-submit`, {
+        method: "POST",
+        body: JSON.stringify({
+          user_agent_id: clickUserAgentId,
+          plan_type: plan,
+          payer_name: payerName.trim() || null,
+          payer_phone: payerPhone.trim() || null,
+          comment: paymentComment.trim() || null,
+          screenshot_url: receiptUrl || null,
+        }),
+      });
+      hapticSuccess();
+      track("purchase_initiated", {
+        agent_slug: agentSlug,
+        plan_type: plan,
+        method: "click_p2p_submitted",
+      });
+      setStep("click_pending");
+    } catch (e: any) {
+      if (e instanceof AuthExpiredError) {
+        setError("Sessiya muddati tugagan. Iltimos mini ilovani qayta oching.");
+      } else {
+        setError(e?.message || "Yuborishda xatolik");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [clickUserAgentId, plan, payerName, payerPhone, paymentComment, receiptUrl, fetchWithAuth, hapticSuccess, track, agentSlug]);
 
-    // ─── HUMO Avto Flow ────────────────────────────────────────
+  // ─── HUMO Avto Flow ────────────────────────────────────────
   const startHumoFlow = useCallback(async () => {
     haptic("medium");
     setError(null);
@@ -355,37 +386,6 @@ export function AgentPurchaseFlow({
     if (humoCountdownTimer) clearInterval(humoCountdownTimer);
     setStep("select_method");
   }, [humoOrder, fetchWithAuth, humoPollTimer, humoCountdownTimer]);
-    setSubmitting(true);
-    setError(null);
-    try {
-      await fetchWithAuth(`/api/payments/click/manual-submit`, {
-        method: "POST",
-        body: JSON.stringify({
-          user_agent_id: clickUserAgentId,
-          plan_type: plan,
-          payer_name: payerName.trim() || null,
-          payer_phone: payerPhone.trim() || null,
-          comment: paymentComment.trim() || null,
-          screenshot_url: receiptUrl || null,
-        }),
-      });
-      hapticSuccess();
-      track("purchase_initiated", {
-        agent_slug: agentSlug,
-        plan_type: plan,
-        method: "click_p2p_submitted",
-      });
-      setStep("click_pending");
-    } catch (e: any) {
-      if (e instanceof AuthExpiredError) {
-        setError("Sessiya muddati tugagan. Iltimos mini ilovani qayta oching.");
-      } else {
-        setError(e?.message || "Yuborishda xatolik");
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }, [clickUserAgentId, plan, payerName, payerPhone, paymentComment, receiptUrl, fetchWithAuth, hapticSuccess, track, agentSlug]);
 
   // Chek rasmi yuklash
   const uploadReceipt = useCallback(async (file: File) => {
