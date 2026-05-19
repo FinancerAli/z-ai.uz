@@ -9,11 +9,12 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# JWT_SECRET bo'sh bo'lsa, random generatsiya qilish (development uchun)
+# JWT_SECRET bo'sh yoki zaif bo'lsa, random generatsiya qilish
 # PRODUCTION: .env faylda JWT_SECRET=... qo'yilishi SHART
-SECRET_KEY = settings.jwt_secret or secrets.token_hex(32)
+# (main.py lifespan'da zaif secret bilan production'da server to'xtatiladi)
+SECRET_KEY = settings.jwt_secret if not settings.jwt_secret_is_weak else secrets.token_hex(32)
 ALGORITHM = settings.jwt_algorithm
-ACCESS_TOKEN_EXPIRE_MINUTES = settings.jwt_expire_minutes
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
 
 
 def create_access_token(data: dict) -> str:

@@ -3,13 +3,19 @@ ZAI Platform — Main Entry Point v2
 FastAPI + Telegram Bot + Agent System.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.database import init_db, seed_agents
-from app.bot.handlers import setup_bot
+from app.bot.handlers import setup_bot, setup_menu_button
 from app.api import router as api_router
+from app.core.limiter import limiter
 
 # Logging
 logging.basicConfig(
@@ -34,11 +40,11 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 ZAI Platform v2 ishga tushmoqda...")
 
     # JWT Secret validation (P0 Security)
-    if not settings.jwt_secret or settings.jwt_secret == "zai-platform-jwt-secret-change-in-production":
+    if settings.jwt_secret_is_weak:
         logger.error("❌ CRITICAL: JWT_SECRET is missing or using default weak key!")
-        logger.error("Please set a strong JWT_SECRET in .env before starting in production.")
-        # If in production, stop the app immediately
-        if settings.app_env != "development":
+        logger.error("Generate a strong key: python -c \"import secrets; print(secrets.token_hex(32))\"")
+        logger.error("Then set JWT_SECRET=<generated_key> in your .env file.")
+        if settings.is_production:
             raise ValueError("Insecure JWT_SECRET in production. Halting startup.")
 
     # Database jadvallarini yaratish (deploy script alembic orqali qiladi)
@@ -56,6 +62,9 @@ async def lifespan(app: FastAPI):
         await bot_app.start()
         await bot_app.updater.start_polling(drop_pending_updates=True)
         logger.info("✅ Telegram bot ishlayapti: @ZAIgentbot")
+
+        # Menu button sozlash — foydalanuvchi chatda doim Mini App tugmasini ko'radi
+        await setup_menu_button(bot_app.bot)
     except Exception as e:
         logger.error(f"Telegram bot xatosi: {e}")
 
@@ -79,6 +88,24 @@ app = FastAPI(
     version="0.2.0",
     lifespan=lifespan,
 )
+
+# Static files (icons for TonConnect manifest)
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(_static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+@app.get("/icon-192.png")
+async def get_icon_192():
+    icon_path = os.path.join(os.path.dirname(__file__), "static", "icon-192.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path, media_type="image/png")
+    return Response(status_code=404)
+
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — Telegram Mini App barcha origin'larni qabul qiladi
 # Telegram mobil WebView "Origin: null" yuboradi, shuning uchun wildcard kerak

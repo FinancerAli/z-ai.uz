@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.agents import require_admin
+from app.api.deps import require_admin
 from app.database import get_db
 from app.models import Agent, Task, User, UserAgent, Subscription, PaymentTransaction
 
@@ -151,18 +151,31 @@ async def admin_tasks(
 
 # ============ FOYDALANUVCHILAR BOSHQARUVI ============
 
-@router.get("/users", response_model=list[AdminUserOut])
-async def admin_users(
+@router.get("/users-legacy", response_model=list[AdminUserOut])
+async def admin_users_legacy(
     limit: int = 50,
     search: str | None = None,
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Foydalanuvchilar ro'yxati."""
+    """[DEPRECATED] Eski format. Yangi panel /api/admin/users ishlatadi (admin_users.py)."""
     safe_limit = min(max(limit, 1), 200)
-    query = select(User, Subscription).outerjoin(
-        Subscription, Subscription.user_id == User.id
-    ).order_by(desc(User.created_at)).limit(safe_limit)
+
+    # Query 1: task counts per user in a single GROUP BY aggregation
+    task_count_subq = (
+        select(Task.user_id, func.count(Task.id).label("tasks_count"))
+        .group_by(Task.user_id)
+        .subquery()
+    )
+
+    # Query 2: users + latest subscription + task count — all in one round-trip
+    query = (
+        select(User, Subscription, task_count_subq.c.tasks_count)
+        .outerjoin(Subscription, Subscription.user_id == User.id)
+        .outerjoin(task_count_subq, task_count_subq.c.user_id == User.id)
+        .order_by(desc(User.created_at))
+        .limit(safe_limit)
+    )
 
     if search:
         query = query.where(
@@ -170,11 +183,8 @@ async def admin_users(
         )
 
     result = await db.execute(query)
-    users_out = []
-    for user, sub in result.all():
-        # Task count
-        tc = await db.execute(select(func.count(Task.id)).where(Task.user_id == user.id))
-        users_out.append(AdminUserOut(
+    return [
+        AdminUserOut(
             id=user.id,
             telegram_id=user.telegram_id,
             username=user.username,
@@ -182,20 +192,21 @@ async def admin_users(
             plan=sub.plan if sub else "none",
             status=sub.status if sub else "none",
             trial_expires_at=sub.expires_at.isoformat() if sub and sub.expires_at else None,
-            tasks_count=tc.scalar() or 0,
+            tasks_count=tasks_count or 0,
             created_at=user.created_at.isoformat() if user.created_at else "",
-        ))
-    return users_out
+        )
+        for user, sub, tasks_count in result.all()
+    ]
 
 
-@router.post("/users/{user_id}/extend-trial")
-async def extend_trial(
+@router.post("/users/{user_id}/extend-trial-legacy")
+async def extend_trial_legacy(
     user_id: str,
     days: int = 3,
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trial muddatini uzaytirish."""
+    """[DEPRECATED] Yangi: admin_users.py POST /admin/users/{id}/extend-trial (audit log bilan)."""
     result = await db.execute(
         select(Subscription).where(Subscription.user_id == user_id).order_by(desc(Subscription.created_at))
     )
@@ -216,13 +227,13 @@ async def extend_trial(
     return {"message": f"Trial {days} kunga uzaytirildi", "expires_at": sub.expires_at.isoformat()}
 
 
-@router.post("/users/{user_id}/block")
-async def block_user(
+@router.post("/users/{user_id}/block-legacy")
+async def block_user_legacy(
     user_id: str,
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Foydalanuvchini bloklash."""
+    """[DEPRECATED] Yangi: admin_users.py POST /admin/users/{id}/block (sabab + audit log bilan)."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -232,13 +243,13 @@ async def block_user(
     return {"message": "Foydalanuvchi bloklandi", "user_id": user_id}
 
 
-@router.post("/users/{user_id}/unblock")
-async def unblock_user(
+@router.post("/users/{user_id}/unblock-legacy")
+async def unblock_user_legacy(
     user_id: str,
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Foydalanuvchini blokdan chiqarish."""
+    """[DEPRECATED] Yangi: admin_users.py POST /admin/users/{id}/unblock (audit log bilan)."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:

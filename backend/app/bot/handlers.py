@@ -3,12 +3,15 @@ ZAI Telegram Bot — Handlers v2
 Foydalanuvchi bilan muloqot + Agent tizimi integratsiyasi.
 """
 import logging
+from datetime import datetime, timezone
+
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
+    MenuButtonWebApp,
     ReplyKeyboardRemove,
+    WebAppInfo,
 )
 from telegram.ext import (
     Application,
@@ -16,51 +19,84 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     ConversationHandler,
+    PreCheckoutQueryHandler,
     filters,
     ContextTypes,
 )
+from sqlalchemy import select, func
+
 from app.config import get_settings
 from app.database import async_session
-from app.models import User, Task, Agent
+from app.models import User, Task, Agent, PaymentTransaction, UserAgent
 from app.agents.agent_engine import run_agent
-from sqlalchemy import select, func
 
 logger = logging.getLogger(__name__)
 
+# Mini App URL — bir joyda boshqarish uchun
+MINI_APP_URL = "https://zai.ustaitech.uz/"
+
 # ======== Conversation States ========
+# SELECTING_AGENT va WAITING_CONTENT olib tashlandi — ishlatilmagan edi
 (
-    SELECTING_AGENT,
     SELECTING_BUSINESS,
     SELECTING_LANGUAGE,
     ENTERING_TOPIC,
-    WAITING_CONTENT,
-) = range(5)
+) = range(3)
 
 
-# ======== /start — Kirish ========
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bot ishga tushganda chiqadigan xabar."""
-    user = update.effective_user
+# ============================================================
+#  YORDAMCHI FUNKSIYALAR
+# ============================================================
 
-    # Foydalanuvchini bazaga saqlash
+async def _get_active_user(telegram_id: int) -> User | None:
+    """
+    Foydalanuvchini DB'dan olish va status tekshirish.
+    Bloklangan yoki topilmagan foydalanuvchi uchun None qaytaradi.
+    """
     async with async_session() as session:
         result = await session.execute(
-            select(User).where(User.telegram_id == user.id)
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user or user.status == "blocked":
+            return None
+        return user
+
+
+async def _get_or_create_user(tg_user) -> User:
+    """Foydalanuvchini olish yoki yangi yaratish."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == tg_user.id)
         )
         db_user = result.scalar_one_or_none()
 
         if not db_user:
             db_user = User(
-                telegram_id=user.id,
-                first_name=user.first_name or "",
-                last_name=user.last_name or "",
-                username=user.username or "",
+                telegram_id=tg_user.id,
+                first_name=tg_user.first_name or "",
+                last_name=tg_user.last_name or "",
+                username=tg_user.username or "",
             )
             session.add(db_user)
             await session.commit()
+            await session.refresh(db_user)
+        else:
+            # last_seen_at yangilash
+            db_user.last_seen_at = datetime.now(timezone.utc)
+            await session.commit()
+
+        return db_user
+
+
+# ======== /start — Kirish ========
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot ishga tushganda chiqadigan xabar."""
+    tg_user = update.effective_user
+    await _get_or_create_user(tg_user)
 
     welcome_text = f"""
-🤖 *Salom, {user.first_name}!*
+🤖 *Salom, {tg_user.first_name}!*
 
 Men *ZAI* — sizning shaxsiy AI yordamchingizman.
 
@@ -73,19 +109,16 @@ Men *ZAI* — sizning shaxsiy AI yordamchingizman.
 🆓 *14 kunlik bepul sinov* — Hoziroq boshlang!
 ━━━━━━━━━━━━━━━━━━━
 """
-
     keyboard = [
-        [InlineKeyboardButton("📝 Kontent yaratish", web_app=__import__("telegram").WebAppInfo(url="https://zai.ustaitech.uz/"))],
+        [InlineKeyboardButton("📝 Kontent yaratish", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton("🤖 Barcha agentlar", callback_data="list_agents")],
         [InlineKeyboardButton("ℹ️ Qanday ishlaydi?", callback_data="how_it_works")],
         [InlineKeyboardButton("💬 Admin bilan bog'lanish", callback_data="contact_admin")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
         welcome_text,
         parse_mode="Markdown",
-        reply_markup=reply_markup,
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -105,9 +138,7 @@ async def list_agents_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         text += f"{a.icon} *{a.name}* — {a.description[:80]}...\n"
         text += f"   💰 {a.price_monthly:,.0f} so'm/oy | 🔄 Kunlik: {a.daily_limit} ta\n\n"
 
-    keyboard = [
-        [InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_menu")],
-    ]
+    keyboard = [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_menu")]]
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -139,7 +170,7 @@ async def how_it_works(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Tayyor bo'lsangiz — quyidagi tugmani bosing 👇
 """
     keyboard = [
-        [InlineKeyboardButton("📝 Kontent yaratish", web_app=__import__("telegram").WebAppInfo(url="https://zai.ustaitech.uz/"))],
+        [InlineKeyboardButton("📝 Kontent yaratish", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton("◀️ Orqaga", callback_data="back_to_menu")],
     ]
     await query.edit_message_text(
@@ -160,9 +191,7 @@ Savollar yoki takliflar bo'lsa:
 
 Yoki shu yerda yozing — admin ko'radi.
 """
-    keyboard = [
-        [InlineKeyboardButton("◀️ Orqaga", callback_data="back_to_menu")],
-    ]
+    keyboard = [[InlineKeyboardButton("◀️ Orqaga", callback_data="back_to_menu")]]
     await query.edit_message_text(
         text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -175,7 +204,7 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "🤖 *ZAI — Bosh menyu*\n\nNima qilmoqchisiz?"
     keyboard = [
-        [InlineKeyboardButton("📝 Kontent yaratish", web_app=__import__("telegram").WebAppInfo(url="https://zai.ustaitech.uz/"))],
+        [InlineKeyboardButton("📝 Kontent yaratish", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton("🤖 Barcha agentlar", callback_data="list_agents")],
         [InlineKeyboardButton("ℹ️ Qanday ishlaydi?", callback_data="how_it_works")],
         [InlineKeyboardButton("💬 Admin bilan bog'lanish", callback_data="contact_admin")],
@@ -193,6 +222,12 @@ async def create_content_start(update: Update, context: ContextTypes.DEFAULT_TYP
     """1-qadam: Biznes turini tanlash."""
     query = update.callback_query
     await query.answer()
+
+    # Bloklangan foydalanuvchini tekshirish
+    db_user = await _get_active_user(update.effective_user.id)
+    if not db_user:
+        await query.edit_message_text("⛔ Sizning hisobingiz bloklangan. Admin bilan bog'laning.")
+        return ConversationHandler.END
 
     text = "📝 *Kontent yaratish*\n\n*1-qadam:* Biznes turingizni tanlang 👇"
     keyboard = [
@@ -269,31 +304,29 @@ Misollar:
 
 
 async def topic_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mavzu keldi → Agent ishga tushadi."""
+    """Mavzu keldi → foydalanuvchi tekshiriladi → Agent ishga tushadi."""
     topic = update.message.text
     context.user_data["topic"] = topic
+
+    # Bloklangan foydalanuvchini tekshirish
+    db_user = await _get_active_user(update.effective_user.id)
+    if not db_user:
+        await update.message.reply_text(
+            "⛔ Sizning hisobingiz bloklangan. Admin bilan bog'laning: @Muxammadali"
+        )
+        return ConversationHandler.END
 
     business_type = context.user_data.get("business_type", "other")
     language = context.user_data.get("language", "uz")
 
-    # Loading xabar
     loading_msg = await update.message.reply_text(
         "🧠 *ZAI ishlamoqda...*\n\n⏳ 3 ta variant tayyorlanmoqda\n_(10-20 soniya kutib turing)_",
         parse_mode="Markdown",
     )
 
-    # Foydalanuvchini olish
-    async with async_session() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == update.effective_user.id)
-        )
-        db_user = result.scalar_one_or_none()
-        user_id = db_user.id if db_user else "bot-user"
-
-    # Agent engine orqali ishga tushirish
     agent_result = await run_agent(
         agent_slug="smm-content",
-        user_id=user_id,
+        user_id=db_user.id,  # haqiqiy user.id (avval "bot-user" edi)
         input_text=topic,
         context_data={
             "business_type": business_type,
@@ -303,18 +336,15 @@ async def topic_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         },
     )
 
-    # Loading xabarni o'chirish
     try:
         await loading_msg.delete()
     except Exception:
         pass
 
-    # Natijani yuborish
     content = agent_result.get("output", "Xatolik yuz berdi")
     tokens = agent_result.get("tokens_used", 0)
     cost = agent_result.get("cost", 0.0)
 
-    # Statistika footer
     footer = f"""
 
 ━━━━━━━━━━━━━━━━━━━
@@ -322,7 +352,6 @@ async def topic_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🤖 Agent: SMM Content | ZAI Platform v2
 """
 
-    # Xabar uzunligi
     full_text = content + footer
     if len(full_text) > 4000:
         await update.message.reply_text(content[:4000])
@@ -330,7 +359,6 @@ async def topic_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(full_text)
 
-    # Keyingi harakat tugmalari
     keyboard = [
         [InlineKeyboardButton("🔄 Yana yaratish (shu mavzu)", callback_data="retry_same")],
         [InlineKeyboardButton("📝 Yangi mavzu", callback_data="create_content")],
@@ -344,7 +372,7 @@ async def topic_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def retry_same_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xuddi shu mavzuda qayta yaratish."""
+    """Xuddi shu mavzuda qayta yaratish — haqiqiy user ID bilan."""
     query = update.callback_query
     await query.answer()
 
@@ -356,6 +384,12 @@ async def retry_same_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Avval mavzu kiriting. /start bosing.")
         return
 
+    # Bloklangan foydalanuvchini tekshirish
+    db_user = await _get_active_user(update.effective_user.id)
+    if not db_user:
+        await query.edit_message_text("⛔ Sizning hisobingiz bloklangan.")
+        return
+
     await query.edit_message_text(
         "🧠 *ZAI qayta ishlamoqda...*\n⏳ Yangi variantlar tayyorlanmoqda...",
         parse_mode="Markdown",
@@ -363,7 +397,7 @@ async def retry_same_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = await run_agent(
         agent_slug="smm-content",
-        user_id="bot-user",
+        user_id=db_user.id,  # haqiqiy user.id (avval "bot-user" hardcoded edi)
         input_text=topic,
         context_data={
             "business_type": business_type,
@@ -374,9 +408,22 @@ async def retry_same_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     content = result.get("output", "Xatolik")
-    footer = f"\n━━━━━━━━━━━━━━━━━━━\n📊 Token: {result.get('tokens_used', 0)} | 💰 ${result.get('cost', 0):.6f}"
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 Token: {result.get('tokens_used', 0)} | "
+        f"💰 ${result.get('cost', 0):.6f}"
+    )
 
-    await query.edit_message_text(content + footer)
+    full_text = content + footer
+    # edit_message_text 4096 belgidan uzun bo'lsa xato beradi
+    if len(full_text) > 4000:
+        await query.edit_message_text(content[:4000])
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=content[4000:] + footer,
+        )
+    else:
+        await query.edit_message_text(full_text)
 
     keyboard = [
         [InlineKeyboardButton("🔄 Yana", callback_data="retry_same")],
@@ -398,34 +445,122 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ======== Admin buyruqlari (tuzatilgan) ========
+# ============================================================
+#  TELEGRAM STARS TO'LOV HANDLERLARI
+# ============================================================
+
+async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stars to'lovini tasdiqlash — payload tekshirish."""
+    query = update.pre_checkout_query
+    payload = query.invoice_payload
+
+    # Payload format: "agent:{user_agent_id}:{plan_type}"
+    if payload.startswith("agent:") and len(payload.split(":")) == 3:
+        await query.answer(ok=True)
+    else:
+        logger.warning(f"Noto'g'ri Stars payload: {payload}")
+        await query.answer(ok=False, error_message="Noto'g'ri to'lov ma'lumotlari")
+
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stars to'lovi muvaffaqiyatli — agentni faollashtirish va audit yozish."""
+    payment = update.message.successful_payment
+    payload = payment.invoice_payload  # "agent:{user_agent_id}:{plan_type}"
+
+    parts = payload.split(":")
+    if len(parts) != 3 or parts[0] != "agent":
+        logger.error(f"Noto'g'ri Stars payload successful_payment'da: {payload}")
+        return
+
+    user_agent_id, plan_type = parts[1], parts[2]
+
+    async with async_session() as session:
+        # UserAgent'ni faollashtirish
+        from datetime import timedelta
+        ua_result = await session.execute(
+            select(UserAgent).where(UserAgent.id == user_agent_id)
+        )
+        ua = ua_result.scalar_one_or_none()
+
+        if not ua:
+            logger.error(f"Stars payment: UserAgent {user_agent_id} topilmadi")
+            await update.message.reply_text("⚠️ Texnik xato. Admin bilan bog'laning: @Muxammadali")
+            return
+
+        now = datetime.now(timezone.utc)
+        plan_days = {"daily": 1, "weekly": 7, "monthly": 30}
+        ua.status = "active"
+        ua.started_at = now
+        ua.expires_at = now + timedelta(days=plan_days.get(plan_type, 30))
+        ua.tasks_used_today = 0
+        ua.tokens_used_today = 0
+
+        # Foydalanuvchini olish
+        user_result = await session.execute(
+            select(User).where(User.telegram_id == update.effective_user.id)
+        )
+        db_user = user_result.scalar_one_or_none()
+
+        # Audit yozuvi
+        tx = PaymentTransaction(
+            user_id=db_user.id if db_user else ua.user_id,
+            agent_id=ua.agent_id,
+            amount=float(payment.total_amount),
+            currency="XTR",
+            payment_method="telegram_stars",
+            tx_hash=payment.telegram_payment_charge_id,
+            status="completed",
+            plan_type=plan_type,
+            completed_at=now,
+        )
+        session.add(tx)
+        await session.commit()
+
+    logger.info(
+        f"Stars to'lov tasdiqlandi: user={update.effective_user.id}, "
+        f"agent={user_agent_id}, charge_id={payment.telegram_payment_charge_id}"
+    )
+
+    await update.message.reply_text(
+        f"✅ *To'lov qabul qilindi!*\n\n"
+        f"💫 {payment.total_amount} Stars sarflandi.\n"
+        f"🤖 Agent faollashtirildi — Mini App'ni oching!\n\n"
+        f"📱 [ZAI'ni ochish]({MINI_APP_URL})",
+        parse_mode="Markdown",
+    )
+
+
+# ============================================================
+#  ADMIN BUYRUQLARI
+# ============================================================
+
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin uchun statistika — Task modelidan foydalanadi."""
+    """Admin uchun statistika."""
     settings = get_settings()
     if update.effective_user.id != settings.admin_telegram_id:
         await update.message.reply_text("⛔ Sizda ruxsat yo'q.")
         return
 
     async with async_session() as session:
-        # Foydalanuvchilar soni
         users_count = await session.execute(select(func.count(User.id)))
         total_users = users_count.scalar()
 
-        # Agentlar soni
         agents_count = await session.execute(select(func.count(Agent.id)))
         total_agents = agents_count.scalar()
 
-        # Topshiriqlar statistikasi
         tasks_count = await session.execute(select(func.count(Task.id)))
         total_tasks = tasks_count.scalar()
 
-        tokens_result = await session.execute(select(func.coalesce(func.sum(Task.tokens_used), 0)))
+        tokens_result = await session.execute(
+            select(func.coalesce(func.sum(Task.tokens_used), 0))
+        )
         total_tokens = tokens_result.scalar()
 
-        cost_result = await session.execute(select(func.coalesce(func.sum(Task.cost), 0.0)))
+        cost_result = await session.execute(
+            select(func.coalesce(func.sum(Task.cost), 0.0))
+        )
         total_cost = cost_result.scalar()
 
-        # Oxirgi foydalanuvchilar
         users_result = await session.execute(
             select(User).order_by(User.created_at.desc()).limit(5)
         )
@@ -450,8 +585,30 @@ Oxirgi 5 foydalanuvchi:
 
 
 # ============================================================
+#  MENU BUTTON SOZLASH
+# ============================================================
+
+async def setup_menu_button(bot) -> None:
+    """
+    Barcha foydalanuvchilar uchun bot menu button'ini Mini App'ga sozlash.
+    Foydalanuvchi bot bilan chatda doim 'ZAI ochish' tugmasini ko'radi.
+    """
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="🤖 ZAI ochish",
+                web_app=WebAppInfo(url=MINI_APP_URL),
+            )
+        )
+        logger.info("✅ Menu button sozlandi: 'ZAI ochish'")
+    except Exception as e:
+        logger.error(f"Menu button sozlashda xato: {e}")
+
+
+# ============================================================
 #  BOT SETUP
 # ============================================================
+
 def setup_bot() -> Application:
     """Telegram bot yaratish va handlerlarni ulash."""
     settings = get_settings()
@@ -483,16 +640,20 @@ def setup_bot() -> Application:
         per_chat=True,
     )
 
-    # Handlers
+    # Asosiy handlerlar
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(content_conv)
 
-    # Callback handlers
+    # Callback handlerlar
     app.add_handler(CallbackQueryHandler(how_it_works, pattern="^how_it_works$"))
     app.add_handler(CallbackQueryHandler(contact_admin, pattern="^contact_admin$"))
     app.add_handler(CallbackQueryHandler(list_agents_callback, pattern="^list_agents$"))
     app.add_handler(CallbackQueryHandler(back_to_menu, pattern="^back_to_menu$"))
     app.add_handler(CallbackQueryHandler(retry_same_topic, pattern="^retry_same$"))
+
+    # Telegram Stars to'lov handlerlari
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
     return app

@@ -55,6 +55,7 @@ def _load_domain_context(agent_slug: str, context_data: dict | None) -> str | No
     # Context'dan domain yoki audience belgisini olish
     domain_hint = (
         str(context_data.get("domain", ""))
+        or str(context_data.get("business_type", ""))
         or str(context_data.get("industry", ""))
         or str(context_data.get("topic", ""))
     ).lower()
@@ -75,11 +76,18 @@ def _load_domain_context(agent_slug: str, context_data: dict | None) -> str | No
                 "restaurant": ["restoran", "restaurant", "cafe", "kafe", "ovqat", "food"],
                 "ecommerce": ["online", "do'kon", "shop", "savdo", "product", "mahsulot"],
                 "beauty": ["beauty", "salon", "kosmetik", "go'zallik", "nail"],
+                "it_course": ["it_course", "it course", "dasturlash", "programming", "bootcamp", "frontend", "backend", "developer"],
+                "fitness": ["fitness", "sport zal", "sport_zal", "gym", "yoga", "pilates", "crossfit", "trener", "murabbiy"],
+                "real_estate": ["real_estate", "real estate", "ko'chmas mulk", "kochmas mulk", "kvartira", "novostroyka", "qurilish", "ipoteka", "kottej"],
+                "taxi": ["taxi", "taksi", "yandex_taxi", "trip", "transfer", "haydovchi"],
+                "delivery": ["delivery", "dostavka", "yetkazib", "kuryer", "courier", "express"],
             }
 
             for domain_name, keywords in domain_keywords.items():
                 if any(kw in domain_hint for kw in keywords):
-                    domain_path = os.path.join(domains_dir, f"{domain_name}.md")
+                    # real_estate slug -> real-estate.md fayl nomi
+                    file_slug = domain_name.replace("_", "-") if domain_name == "real_estate" else domain_name
+                    domain_path = os.path.join(domains_dir, f"{file_slug}.md")
                     if os.path.exists(domain_path):
                         try:
                             with open(domain_path, encoding="utf-8") as f:
@@ -98,14 +106,20 @@ def _calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> f
     return (prompt_tokens * price["input"] / 1_000_000) + (completion_tokens * price["output"] / 1_000_000)
 
 
-def _reset_daily_if_needed(ua: UserAgent) -> None:
-    """Agar yangi kun bo'lsa, daily hisoblagichni reset qilish."""
+def _reset_daily_if_needed(ua: UserAgent) -> bool:
+    """Agar yangi kun bo'lsa, daily hisoblagichni reset qilish.
+    Returns:
+        True — reset bo'ldi (commit chaqiruvchining mas'uliyati)
+        False — reset shart emas
+    """
     today = date.today()
     last_date = ua.last_reset_at.date() if getattr(ua, 'last_reset_at', None) else (ua.started_at.date() if ua.started_at else None)
     if last_date and last_date < today:
         ua.tasks_used_today = 0
         ua.tokens_used_today = 0
         ua.last_reset_at = datetime.now(timezone.utc)
+        return True
+    return False
 
 
 async def run_agent(
@@ -129,7 +143,9 @@ async def run_agent(
         if not agent:
             return {"error": "Agent topilmadi", "output": None, "tokens_used": 0, "cost": 0.0}
 
-        # 2. UserAgent + limit tekshirish (bot/sinov uchun yumshoq)
+        # 2. UserAgent + limit tekshirish
+        # ESLATMA: Kunlik limit tasks.py da atomik tekshiriladi.
+        # Bu yerda faqat UserAgent mavjudligi va subscription tekshiriladi.
         ua_result = await session.execute(
             select(UserAgent).where(
                 UserAgent.user_id == user_id,
@@ -138,27 +154,34 @@ async def run_agent(
             )
         )
         ua = ua_result.scalar_one_or_none()
-        
-        # Beta: agar user agent sotib olmagan bo'lsa, bepul sinov rejimi
+
+        # Agar user agent sotib olmagan bo'lsa, subscription tekshirish
         if not ua:
+            # P1.3 fix: ORDER BY + LIMIT 1 — agar bir nechta active sub bo'lsa
+            # MultipleResultsFound yuzaga kelmasin. Eng yangisi olinadi.
             sub_result = await session.execute(
-                select(Subscription).where(
+                select(Subscription)
+                .where(
                     Subscription.user_id == user_id,
                     Subscription.status == "active",
                 )
+                .order_by(Subscription.created_at.desc())
+                .limit(1)
             )
             sub = sub_result.scalar_one_or_none()
             if not sub:
-                # Yangi user — avtomatik free_beta obuna
+                # Yangi user — avtomatik free_beta obuna (bot orqali kelgan)
                 sub = Subscription(user_id=user_id, plan="free_beta", monthly_limit=10)
                 session.add(sub)
                 await session.flush()
             if sub.used_count >= sub.monthly_limit:
-                return {"error": "Bepul limit tugagan. Agent sotib oling.", "output": None, "tokens_used": 0, "cost": 0.0}
+                return {
+                    "error": "Bepul limit tugagan. Agent sotib oling.",
+                    "output": None, "tokens_used": 0, "cost": 0.0,
+                }
         else:
+            # Daily reset tekshirish (limit increment tasks.py da qilinadi)
             _reset_daily_if_needed(ua)
-            if (ua.tasks_used_today or 0) >= agent.daily_limit:
-                return {"error": "Kunlik limit tugagan", "output": None, "tokens_used": 0, "cost": 0.0}
 
         # 3. Skillarni yuklash
         skills_result = await session.execute(
@@ -212,7 +235,25 @@ async def run_agent(
         
         extra_data = []
         if brand:
-            extra_data.append(f"--- BREND MA'LUMOTLARI ---\nNomi: {brand.business_name}\nSoha: {brand.industry}\nAuditoriya: {brand.target_audience}\nMahsulotlar: {brand.products_services}\nOhang: {brand.brand_tone}\nCTA: {brand.main_cta}\n--------------------------")
+            brand_lines = [
+                "<brand_profile>",
+                f"  business_name: {brand.business_name}",
+                f"  industry: {brand.industry}",
+                f"  target_audience: {brand.target_audience}",
+                f"  products_services: {brand.products_services}",
+                f"  brand_tone: {brand.brand_tone}",
+                f"  main_cta: {brand.main_cta}",
+            ]
+            if brand.unique_selling_points:
+                brand_lines.append(f"  unique_selling_points: {brand.unique_selling_points}")
+            if brand.banned_words:
+                brand_lines.append(f"  banned_words: {brand.banned_words}")
+                brand_lines.append("  ⚠️ QOIDA: Yuqoridagi so'zlarni HECH QACHON ishlatmang!")
+            if brand.preferred_phrases:
+                brand_lines.append(f"  preferred_phrases: {brand.preferred_phrases}")
+                brand_lines.append("  💡 Imkon qadar yuqoridagi iboralardan foydalaning.")
+            brand_lines.append("</brand_profile>")
+            extra_data.append("\n".join(brand_lines))
         if context_data:
             extra_data.append("\n".join(f"{k}: {v}" for k, v in context_data.items() if v))
             
@@ -224,11 +265,36 @@ async def run_agent(
         await session.commit()
 
     # === AI CHAQIRUV (session tashqarisida, lekin tezroq) ===
+    # Model selection: agent.ai_model ustuvor (admin har agent uchun alohida sozlay oladi),
+    # bo'sh bo'lsa global settings.ai_model fallback.
+    selected_model = (agent.ai_model or "").strip() or settings.ai_model
+
     if not settings.ai_api_key:
-        await _finalize_task(task.id, "failed", ERROR_SANITIZED)
+        # DEMO MODE: API kaliti yo'q — demo output yaratamiz va task'ni completed qilamiz.
+        # ⚠️ Eski xato: status="failed" + output_text=null edi → history'da ko'rinmasdi.
+        # Endi: completed + output saqlanadi.
+        demo_output = (
+            f"DEMO MODE\n\n"
+            f"Agent: {agent.name}\n"
+            f"Topshiriq: {input_text}\n\n"
+            f"AI API kaliti o'rnatilmagan. Bu test javobi.\n"
+            f"Real javob olish uchun .env'da AI_API_KEY ni sozlang."
+        )
+        logger.info(
+            f"agent_run mode=demo agent={agent_slug} model={selected_model} user={user_id}"
+        )
+        await _finalize_task(
+            task.id, status="completed", error=None,
+            output=demo_output, tokens=0, cost=0.0,
+        )
+        # Demo paytda ham tokens_used_today/usage_log yangilanmaydi —
+        # haqiqiy AI ishlatilmagani uchun. tasks_used_today esa tasks.py'da
+        # allaqachon atomik tarzda ko'paytirilgan (paid users uchun).
         return {
-            "output": f"DEMO MODE\n\nAgent: {agent.name}\nTopshiriq: {input_text}\n\nAPI kaliti o'rnatilmagan.",
-            "tokens_used": 0, "cost": 0.0, "task_id": task.id,
+            "output": demo_output,
+            "tokens_used": 0,
+            "cost": 0.0,
+            "task_id": task.id,
         }
 
     client = AsyncOpenAI(
@@ -236,9 +302,13 @@ async def run_agent(
         base_url=settings.ai_base_url,
     )
 
+    logger.info(
+        f"agent_run mode=real agent={agent_slug} model={selected_model} user={user_id}"
+    )
+
     try:
         response = await client.chat.completions.create(
-            model=settings.ai_model,
+            model=selected_model,
             messages=messages + [{"role": "user", "content": user_message}],
             temperature=agent.temperature,
             max_tokens=agent.max_tokens_per_task,
@@ -248,7 +318,7 @@ async def run_agent(
         prompt_t = response.usage.prompt_tokens if response.usage else 0
         comp_t = response.usage.completion_tokens if response.usage else 0
         tokens = prompt_t + comp_t
-        cost = _calculate_cost(settings.ai_model, prompt_t, comp_t)
+        cost = _calculate_cost(selected_model, prompt_t, comp_t)
 
         await _finalize_task(task.id, "completed", None, output, tokens, cost)
         await _increment_usage(user_id, agent.id, tokens)
@@ -261,7 +331,7 @@ async def run_agent(
         }
 
     except Exception as e:
-        logger.error(f"Agent {agent_slug} API xatosi: {e}")
+        logger.error(f"Agent {agent_slug} (model={selected_model}) API xatosi: {e}")
         await _finalize_task(task.id, "failed", ERROR_SANITIZED)
         return {
             "output": ERROR_SANITIZED,
@@ -290,6 +360,20 @@ async def _finalize_task(
 
 
 async def _increment_usage(user_id: str, agent_id: str, tokens: int):
+    """
+    Muvaffaqiyatli AI run keyin chaqiriladi. FAQAT tokens va daily reset
+    bilan ishlaydi — tasks_used_today ni TEGMAYDI.
+
+    ⚠️ Diqqat: tasks_used_today tasks.py'da atomik UPDATE bilan AI chaqiruvidan
+    OLDIN ko'paytiriladi (race condition'dan himoya). Bu yerda yana ko'paytirish
+    "double counting" ga olib keladi (har task = 2 hisoblash).
+
+    Subscription.used_count ham xuddi shunday — tasks.py trial yo'lida bugungi
+    Task'larni Task jadvalidan COUNT(*) bilan hisoblaydi, alohida used_count
+    counter ishlatmaydi. Demak, bu yerda subscription'ni ham tegmaymiz.
+    """
+    if tokens <= 0:
+        return  # demo yoki nol token — saqlash shart emas
     async with async_session() as session:
         result = await session.execute(
             select(UserAgent).where(
@@ -300,17 +384,9 @@ async def _increment_usage(user_id: str, agent_id: str, tokens: int):
         )
         ua = result.scalar_one_or_none()
         if ua:
+            # Daily reset (kechagi qiymat saqlanib qolmasin) —
+            # tasks.py allaqachon reset qiladi, bu yerda double-safe.
             _reset_daily_if_needed(ua)
-            ua.tasks_used_today = (ua.tasks_used_today or 0) + 1
+            # FAQAT tokens — tasks_used_today emas!
             ua.tokens_used_today = (ua.tokens_used_today or 0) + tokens
-        else:
-            sub_result = await session.execute(
-                select(Subscription).where(
-                    Subscription.user_id == user_id,
-                    Subscription.status == "active",
-                )
-            )
-            sub = sub_result.scalar_one_or_none()
-            if sub:
-                sub.used_count = (sub.used_count or 0) + 1
         await session.commit()

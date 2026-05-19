@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_admin
 from app.config import get_settings
 from app.database import get_db
 from app.models import Agent, User, UserAgent
@@ -79,12 +79,6 @@ class AdminPurchaseOut(BaseModel):
 class AdminUserAgentOut(AdminPurchaseOut):
     tasks_used_today: int
     expires_at: str | None
-
-
-async def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.telegram_id != settings.admin_telegram_id and not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin ruxsati kerak")
-    return user
 
 
 def _json_list(value: str | None) -> list[str]:

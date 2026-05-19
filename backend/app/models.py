@@ -20,6 +20,7 @@ class User(Base):
     last_name: Mapped[str] = mapped_column(String(255), nullable=True)
     language_code: Mapped[str] = mapped_column(String(10), default="uz")
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(50), default="active")
     balance: Mapped[float] = mapped_column(Float, default=0.0)  # so'm
 
@@ -30,6 +31,9 @@ class User(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    write_access_granted: Mapped[bool] = mapped_column(Boolean, default=False)
+    blocked_reason: Mapped[str] = mapped_column(Text, nullable=True)
+    blocked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     brand_profiles = relationship("BrandProfile", back_populates="user", cascade="all, delete-orphan")
@@ -100,6 +104,14 @@ class Agent(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Origin marker — agent qayerdan kelgan.
+    # "seed"     — startup paytida AGENTS_SEED registry'dan yaratilgan default agentlar
+    # "admin"    — admin panel orqali yaratilgan (default)
+    # "creator"  — kelajakdagi creator economy uchun zaxira
+    # "imported" — boshqa platforma yoki marketplace'dan import qilingan
+    # seed_agents() FAQAT source="seed" bo'lgan yozuvlarni boshqaradi.
+    source: Mapped[str] = mapped_column(String(20), default="admin", nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
@@ -284,6 +296,22 @@ class PaymentManual(Base):
     admin_note: Mapped[str] = mapped_column(Text, nullable=True)
     confirmed_by: Mapped[str] = mapped_column(String(36), nullable=True)
 
+    # YANGI: agent va user_agent bilan bog'lash (Click P2P uchun)
+    agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("agents.id"), nullable=True, index=True)
+    user_agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user_agents.id"), nullable=True, index=True)
+
+    # Server tomondan hisoblangan kutilayotgan summa (UZS)
+    expected_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Foydalanuvchi yuborgan summa (UZS) — fraud detection uchun
+    submitted_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Ixtiyoriy foydalanuvchi ma'lumotlari
+    payer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payer_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    receipt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    screenshot_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     confirmed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -322,3 +350,31 @@ class Feedback(Base):
     source: Mapped[str] = mapped_column(String(50))
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AuditLog(Base):
+    """Admin amallarini qayd etish."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    admin_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(100), index=True)
+    target_type: Mapped[str] = mapped_column(String(50))
+    target_id: Mapped[str] = mapped_column(String(36), nullable=True)
+    payload: Mapped[str] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class AnalyticsEvent(Base):
+    """Mahsulot analitikasi uchun event log (E4)."""
+    __tablename__ = "analytics_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    event_name: Mapped[str] = mapped_column(String(64), index=True)  # agent_viewed, content_generated, ...
+    properties: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string (max 4KB)
+    platform: Mapped[str | None] = mapped_column(String(32), nullable=True)  # tdesktop, ios, android, web
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)

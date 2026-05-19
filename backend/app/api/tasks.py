@@ -3,23 +3,31 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import desc, select
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import desc, select, update as sa_update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.agent_engine import run_agent
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.models import Agent, Task, User, UserAgent
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 class TaskCreate(BaseModel):
     agent_slug: str
-    input_text: str = ""
+    input_text: str = Field("", max_length=10000)
     context_data: dict[str, Any] | None = None
+
+    @field_validator("context_data")
+    @classmethod
+    def validate_context_data_size(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        if v is not None and len(json.dumps(v)) > 51200:
+            raise ValueError("context_data juda katta (max 50KB)")
+        return v
 
 
 class TaskOut(BaseModel):
@@ -121,7 +129,9 @@ def _task_out(task: Task, agent: Agent) -> TaskOut:
 
 @router.post("", response_model=TaskOut)
 @router.post("/run", response_model=TaskOut)
+@limiter.limit("5/minute")
 async def create_and_run_task(
+    request: Request,
     req: TaskCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -160,7 +170,6 @@ async def create_and_run_task(
     # 2. Agar trial faol bo'lsa — barcha agentlarga ruxsat (kunlik 10 ta limit)
     if is_trial_active:
         # Bugungi task sonini hisoblash
-        from sqlalchemy import func
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_count_result = await db.execute(
             select(func.count(Task.id)).where(
@@ -169,7 +178,11 @@ async def create_and_run_task(
             )
         )
         today_count = today_count_result.scalar() or 0
-        daily_limit = sub.monthly_limit or 10  # 10 ta kuniga
+        daily_limit = sub.monthly_limit or 10
+
+        # Premium foydalanuvchilar uchun 1.5x limit
+        if user.is_premium:
+            daily_limit = int(daily_limit * 1.5)
 
         if today_count >= daily_limit:
             raise HTTPException(
@@ -197,10 +210,40 @@ async def create_and_run_task(
             ua.status = "expired"
             await db.commit()
             raise HTTPException(status_code=403, detail="Agent muddati tugagan. Qayta sotib oling.")
-        if (ua.tasks_used_today or 0) >= agent.daily_limit:
-            raise HTTPException(status_code=429, detail="Kunlik limit tugagan")
+
+        # P1.2 fix: Atomik UPDATE'dan oldin kunlik counter'ni reset qilamiz
+        # — kechagi qiymat bugun saqlanib qolmasin
+        from app.agents.agent_engine import _reset_daily_if_needed
+        if _reset_daily_if_needed(ua):
+            await db.commit()
+
+        # Atomik limit tekshiruvi va increment — race condition'dan himoya
+        # UPDATE faqat limit oshib ketmagan bo'lsa ishlaydi
+        update_result = await db.execute(
+            sa_update(UserAgent)
+            .where(
+                UserAgent.id == ua.id,
+                UserAgent.tasks_used_today < agent.daily_limit,
+            )
+            .values(tasks_used_today=UserAgent.tasks_used_today + 1)
+            .returning(UserAgent.id)
+        )
+        await db.commit()
+
+        if update_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Kunlik limit tugagan ({agent.daily_limit} ta). Ertaga qayta urinib ko'ring."
+            )
 
     prepared_input, context_data = _prepare_input(agent, req)
+    # tasks_used_today AI chaqiruvidan oldin atomik tarzda +1 qilingan (paid yo'l).
+    # Agar run_agent xato qaytarsa — kompensatsiya: -1.
+    incremented_ua_id: str | None = None
+    if not is_trial_active:
+        # Yuqorida update_result orqali ko'paytirilgan UserAgent — ua.id biz bilamiz
+        incremented_ua_id = ua.id  # noqa — ua yuqoridagi blokda mavjud
+
     result = await run_agent(
         agent_slug=req.agent_slug,
         user_id=user.id,
@@ -209,9 +252,39 @@ async def create_and_run_task(
     )
 
     if result.get("error"):
+        # Kompensatsiya — agar paid yo'lda increment qilingan bo'lsa, qaytarib olamiz.
+        # Trial yo'lda Task jadvalidan COUNT bilan hisoblaganimiz uchun kompensatsiya
+        # shart emas (Task DB'da failed bo'lib saqlanadi va keyingi COUNT ham uni hisoblaydi —
+        # bu kichik nokamillik, lekin trial yo'l uchun sezilmaydi).
+        if incremented_ua_id:
+            await db.execute(
+                sa_update(UserAgent)
+                .where(
+                    UserAgent.id == incremented_ua_id,
+                    UserAgent.tasks_used_today > 0,
+                )
+                .values(tasks_used_today=UserAgent.tasks_used_today - 1)
+            )
+            await db.commit()
+
         detail = result["error"]
         status_code = 429 if "limit" in detail.lower() else 400
         raise HTTPException(status_code=status_code, detail=detail)
+
+    # AI server xatosi (run_agent ichida exception) — output ERROR_SANITIZED bo'ladi
+    # va task DB'da "failed" deb saqlanadi. Foydalanuvchi limit'ini sarflamasligi
+    # uchun increment'ni qaytarib olamiz.
+    from app.agents.agent_engine import ERROR_SANITIZED
+    if result.get("output") == ERROR_SANITIZED and incremented_ua_id:
+        await db.execute(
+            sa_update(UserAgent)
+            .where(
+                UserAgent.id == incremented_ua_id,
+                UserAgent.tasks_used_today > 0,
+            )
+            .values(tasks_used_today=UserAgent.tasks_used_today - 1)
+        )
+        await db.commit()
 
     task_result = await db.execute(
         select(Task).where(Task.id == result["task_id"])

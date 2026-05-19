@@ -194,6 +194,9 @@ interface TGWebApp {
   readTextFromClipboard(callback: (text: string | null) => void): void;
   requestContact(callback: (shared: boolean) => void): void;
   requestWriteAccess(callback: (granted: boolean) => void): void;
+
+  // Payments (Bot API 6.1+)
+  openInvoice(url: string, callback?: (status: string) => void): void;
 }
 
 declare global {
@@ -244,20 +247,56 @@ export function useTelegram() {
     if (webapp.disableVerticalSwipes) webapp.disableVerticalSwipes();
 
     const applyTheme = () => {
-      const isDark = webapp.colorScheme === "dark";
+      const p = webapp.themeParams;
+
+      // Dark mode aniqlash: colorScheme + bg_color luminance ikkalasini tekshirish
+      // Telegram desktop'da colorScheme har doim "light" bo'lishi mumkin,
+      // shuning uchun bg_color'dan ham foydalaniladi
+      let isDark = webapp.colorScheme === "dark";
+      if (!isDark && p.bg_color) {
+        // bg_color hex'dan luminance hisoblash
+        const hex = p.bg_color.replace("#", "");
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        // Relative luminance formula
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        isDark = luminance < 0.5;
+      }
       document.documentElement.classList.toggle("dark", isDark);
 
       // Telegram theme colors → CSS variables
-      const p = webapp.themeParams;
       const root = document.documentElement.style;
-      if (p.bg_color)              root.setProperty("--tg-bg",              p.bg_color);
-      if (p.text_color)            root.setProperty("--tg-text",            p.text_color);
-      if (p.button_color)          root.setProperty("--tg-button",          p.button_color);
-      if (p.button_text_color)     root.setProperty("--tg-button-text",     p.button_text_color);
-      if (p.secondary_bg_color)    root.setProperty("--tg-secondary-bg",    p.secondary_bg_color);
-      if (p.header_bg_color)       root.setProperty("--tg-header-bg",       p.header_bg_color);
-      if (p.hint_color)            root.setProperty("--tg-hint",            p.hint_color);
-      if (p.destructive_text_color) root.setProperty("--tg-destructive",   p.destructive_text_color);
+      if (p.bg_color)               root.setProperty("--tg-bg",              p.bg_color);
+      if (p.text_color)             root.setProperty("--tg-text",            p.text_color);
+      if (p.button_color)           root.setProperty("--tg-button",          p.button_color);
+      if (p.button_text_color)      root.setProperty("--tg-button-text",     p.button_text_color);
+      if (p.secondary_bg_color)     root.setProperty("--tg-secondary-bg",    p.secondary_bg_color);
+      if (p.header_bg_color)        root.setProperty("--tg-header-bg",       p.header_bg_color);
+      if (p.hint_color)             root.setProperty("--tg-hint",            p.hint_color);
+      if (p.destructive_text_color) root.setProperty("--tg-destructive",     p.destructive_text_color);
+
+      // Telegram bg_color'ni to'g'ridan-to'g'ri CSS background'ga ulash
+      // Bu Telegram'ning o'z fon rangi bilan to'liq mos kelishini ta'minlaydi
+      if (p.bg_color) {
+        root.setProperty("--background", p.bg_color);
+        document.body.style.backgroundColor = p.bg_color;
+      }
+      if (p.secondary_bg_color) {
+        root.setProperty("--card", p.secondary_bg_color);
+        root.setProperty("--muted", p.secondary_bg_color);
+      }
+      if (p.text_color) {
+        root.setProperty("--foreground", p.text_color);
+        root.setProperty("--card-foreground", p.text_color);
+      }
+      if (p.hint_color) {
+        root.setProperty("--muted-foreground", p.hint_color);
+      }
+      if (p.button_color) {
+        root.setProperty("--primary", p.button_color);
+        root.setProperty("--ring", p.button_color);
+      }
     };
 
     applyTheme();
@@ -325,6 +364,7 @@ export function useTelegram() {
 
   // 4. MainButton (BottomButton) kontroli
   const activeMainButtonCallback = useRef<(() => void) | null>(null);
+  const activeSecondaryCallback = useRef<(() => void) | null>(null);
 
   const showMainButton = useCallback((
     text: string,
@@ -368,6 +408,30 @@ export function useTelegram() {
     }
   }, [webapp]);
 
+  // 4b. SecondaryButton kontroli
+  const showSecondaryButton = useCallback((text: string, onClick: () => void) => {
+    const btn = webapp?.SecondaryButton;
+    if (!btn) return;
+    if (activeSecondaryCallback.current) {
+      btn.offClick(activeSecondaryCallback.current);
+    }
+    btn.setText(text);
+    btn.onClick(onClick);
+    activeSecondaryCallback.current = onClick;
+    btn.show();
+    btn.enable();
+  }, [webapp]);
+
+  const hideSecondaryButton = useCallback(() => {
+    const btn = webapp?.SecondaryButton;
+    if (!btn) return;
+    btn.hide();
+    if (activeSecondaryCallback.current) {
+      btn.offClick(activeSecondaryCallback.current);
+      activeSecondaryCallback.current = null;
+    }
+  }, [webapp]);
+
   // 5. Native Popup
   const showAlert = useCallback((message: string) => {
     return new Promise<void>((resolve) => {
@@ -391,6 +455,12 @@ export function useTelegram() {
   // 6. Home Screen shortcut
   const addToHomeScreen = useCallback(() => {
     webapp?.addToHomeScreen();
+  }, [webapp]);
+
+  // 7b. Share to Story
+  const shareToStory = useCallback((mediaUrl: string, text?: string) => {
+    if (!webapp?.shareToStory) return;
+    webapp.shareToStory(mediaUrl, text ? { text } : undefined);
   }, [webapp]);
 
   // 7. User data
@@ -418,12 +488,17 @@ export function useTelegram() {
     showMainButton,
     hideMainButton,
     setMainButtonLoading,
+    // Secondary Button
+    showSecondaryButton,
+    hideSecondaryButton,
     // Popups
     showAlert,
     showConfirm,
     showPopup,
     // Home screen
     addToHomeScreen,
+    // Share
+    shareToStory,
     // Cloud storage helpers
     cloudSet,
     cloudGet,

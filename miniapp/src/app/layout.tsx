@@ -3,6 +3,7 @@ import { Geist } from "next/font/google";
 import "./globals.css";
 import Script from "next/script";
 import { TonProvider } from "@/components/ton-provider";
+import { Toaster } from "sonner";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -34,8 +35,14 @@ export default function RootLayout({
         <TonProvider>
           {children}
         </TonProvider>
+        <Toaster
+          position="top-center"
+          toastOptions={{
+            className: "rounded-xl text-sm font-medium",
+            duration: 3000,
+          }}
+        />
       </body>
     </html>
   );
 }
-
