@@ -13,3 +13,7 @@ httpx==0.28.1
 PyJWT==2.8.0
 slowapi==0.1.9
 aiofiles==24.1.0
+
+# HUMO Avto P2P — Telegram bank bot listener (userbot)
+# Faqat bank_listener service uchun, asosiy backend'da ishlatilmaydi
+telethon==1.36.0

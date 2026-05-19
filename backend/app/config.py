@@ -56,6 +56,38 @@ class Settings(BaseSettings):
     click_receiver_name: str = "ZAI"
     click_payment_enabled: bool = True
 
+    # ═══════════════════════════════════════════════════════════
+    # HUMO Avto P2P (Telegram bot SMS bilan avtomatik tasdiqlash)
+    # ═══════════════════════════════════════════════════════════
+    humo_avto_enabled: bool = False  # Production'da True qilib ulang
+
+    # Karta ma'lumotlari (frontend ko'rsatadi)
+    humo_card_number: str = ""               # "9860 0123 4567 8286"
+    humo_card_mask: str = ""                 # "VISA *8286" — listener filter qiladi
+    humo_card_holder_name: str = ""          # "ALI VALIYEV"
+
+    # Order TTL (minut) — 10 minut tavsiya etiladi (bank SMS kechikishi 5-10 min bo'lishi mumkin)
+    humo_order_ttl_minutes: int = 10
+
+    # Maksimal "+1 so'm" collision offset — bir vaqtda nechta concurrent order
+    humo_collision_max_offset: int = 99      # 0..99 so'm
+
+    # SMS Webhook xavfsizlik
+    # Listener bu URL'ga POST qiladi:
+    #   POST /api/payments/sms/webhook/{secret}
+    sms_webhook_secret: str = ""             # URL secret (32+ random bytes)
+    sms_webhook_hmac_key: str = ""           # HMAC payload imzolash kaliti
+    sms_webhook_allowed_ips: str = ""        # vergul bilan ajratilgan IP whitelist (bo'sh = hammasi)
+    # Eslatma: agar listener bir xil server'da bo'lsa, "127.0.0.1" yetarli
+
+    # Telethon listener (sandbox emas, alohida service ishga tushiriladi)
+    # Ushbu sozlamalar listener tomondan o'qiladi:
+    telethon_api_id: int = 0                 # my.telegram.org dan
+    telethon_api_hash: str = ""              # my.telegram.org dan
+    telethon_session_name: str = "zai_listener"
+    # Bank bot username'lari (vergul bilan)
+    bank_bot_usernames: str = "humocardbot"  # masalan: "humocardbot,uzcardpaybot"
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

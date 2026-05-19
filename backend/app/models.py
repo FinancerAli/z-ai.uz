@@ -1,6 +1,10 @@
 """ZAI Platform — Database Models (v2 — Agent System)"""
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
+
 from sqlalchemy import String, Integer, Text, Boolean, DateTime, Float, BigInteger, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -297,20 +301,20 @@ class PaymentManual(Base):
     confirmed_by: Mapped[str] = mapped_column(String(36), nullable=True)
 
     # YANGI: agent va user_agent bilan bog'lash (Click P2P uchun)
-    agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("agents.id"), nullable=True, index=True)
-    user_agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user_agents.id"), nullable=True, index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("agents.id"), nullable=True, index=True)
+    user_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("user_agents.id"), nullable=True, index=True)
 
     # Server tomondan hisoblangan kutilayotgan summa (UZS)
-    expected_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Foydalanuvchi yuborgan summa (UZS) — fraud detection uchun
-    submitted_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    submitted_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Ixtiyoriy foydalanuvchi ma'lumotlari
-    payer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    payer_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    receipt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    screenshot_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payer_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    payer_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    receipt_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    screenshot_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     confirmed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -371,10 +375,127 @@ class AnalyticsEvent(Base):
     __tablename__ = "analytics_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True, index=True)
-    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     event_name: Mapped[str] = mapped_column(String(64), index=True)  # agent_viewed, content_generated, ...
-    properties: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string (max 4KB)
-    platform: Mapped[str | None] = mapped_column(String(32), nullable=True)  # tdesktop, ios, android, web
+    properties: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON string (max 4KB)
+    platform: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # tdesktop, ios, android, web
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+# ============================================================
+#  HUMO AVTO P2P PAYMENT (NEW — @humocardbot orqali)
+# ============================================================
+#
+# Mexanizm:
+#   1. User HUMO Avto tugmasini bosadi -> POST /humo/quote
+#   2. Backend HumoOrder yaratadi (base_amount + collision avoidance "+1 so'm")
+#   3. Frontend karta + summa + 10-min countdown ko'rsatadi
+#   4. User HUMO/UzCard kartaga shu summani yuboradi
+#   5. Bank @humocardbot orqali Telegram'ga xabar yuboradi
+#   6. Telethon listener xabarni ushlaydi -> POST /humo/webhook
+#   7. SmsLog yaratiladi, parser summa va karta maskini ajratadi
+#   8. Order matching engine pending order topadi (amount + 10-min window)
+#   9. UserAgent faollashadi, user'ga Telegram notification
+
+
+class HumoOrder(Base):
+    """
+    HUMO Avto to'lov uchun pending order.
+
+    Lifecycle:
+        pending -> paid (SMS muvaffaqiyatli match)
+        pending -> expired (TTL 10 min)
+        pending -> cancelled (user qo'lda bekor qildi)
+        pending -> manual_review (SMS keldi, lekin auto-match ishlamadi)
+    """
+    __tablename__ = "humo_orders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    user_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("user_agents.id"), nullable=True, index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("agents.id"), nullable=True)
+
+    # Tarif
+    plan: Mapped[str] = mapped_column(String(20), default="monthly")  # daily | weekly | monthly
+
+    # Summalar
+    base_amount: Mapped[float] = mapped_column(Float)        # Toza narx (DB'dan)
+    expected_amount: Mapped[float] = mapped_column(Float, index=True)  # base + extra_sum (collision uchun)
+    extra_sum: Mapped[float] = mapped_column(Float, default=0)  # +0..+99 so'm (collision avoid)
+
+    # Karta
+    card_mask: Mapped[str] = mapped_column(String(50))  # "VISA *8286"
+    card_holder_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # pending | paid | expired | cancelled | manual_review
+
+    # SMS bog'lanish (paid bo'lgach to'ldiriladi)
+    sms_log_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("sms_logs.id"), nullable=True)
+
+    # Vaqtlar
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class SmsLog(Base):
+    """
+    Bank SMS xabarlari log'i.
+
+    @humocardbot dan kelgan barcha xabarlar shu yerga yoziladi (parse qilinishidan
+    qat'iy nazar). Bu — audit trail + reconciliation uchun manba.
+    """
+    __tablename__ = "sms_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Telethon source
+    sms_external_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)  # tg msg id
+    from_chat: Mapped[str] = mapped_column(String(100))  # bot username (@humocardbot)
+    raw_text: Mapped[str] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    # Parse natijasi
+    transaction_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # topup | operation | payment
+    parsed_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
+    parsed_card: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    parsed_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # "BEEPUL P2P>TASHKENT"
+    parsed_balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    parsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # Match natijasi
+    status: Mapped[str] = mapped_column(String(30), default="received", index=True)
+    # received | unparseable | filtered (boshqa karta yoki outgoing) |
+    # matched | no_match | manual_match
+    matched_order_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("humo_orders.id"), nullable=True)
+    matched_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)  # auto | admin user_id
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AppSetting(Base):
+    """
+    Key/value sozlamalar (admin panel orqali boshqarilishi mumkin).
+
+    Maqsad:
+      - TON_UZS_RATE manual override
+      - HUMO Avto enable/disable
+      - SMS forwarder secret rotation
+      - va h.k.
+    """
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    updated_by: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)

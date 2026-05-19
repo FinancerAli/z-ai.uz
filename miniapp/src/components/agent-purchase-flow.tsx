@@ -22,7 +22,7 @@ interface AgentPurchaseFlowProps {
   onClose: () => void;
 }
 
-type PaymentMethod = "ton" | "click";
+type PaymentMethod = "ton" | "click" | "humo";
 type FlowStep =
   | "select_plan"
   | "select_method"
@@ -34,6 +34,9 @@ type FlowStep =
   | "click_pay"          // foydalanuvchi tashqi linkka o'tadi va to'laydi
   | "click_form"         // to'lov ma'lumotlarini yuboradi (ism, telefon, izoh)
   | "click_pending"      // admin tasdig'ini kutmoqda
+  // HUMO Avto yo'li
+  | "humo_pay"           // karta + summa + countdown ko'rsatiladi
+  | "humo_polling"       // to'lov kutilmoqda (auto-check)
   // Yakuniy
   | "success"
   | "failed";
@@ -82,6 +85,22 @@ export function AgentPurchaseFlow({
   const [submitting, setSubmitting] = useState(false);
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
+
+  // HUMO Avto state
+  const [humoOrder, setHumoOrder] = useState<{
+    order_id: string;
+    card_number: string;
+    card_mask: string;
+    card_holder_name: string | null;
+    expected_amount: number;
+    extra_sum: number;
+    expires_at: string;
+    ttl_seconds: number;
+  } | null>(null);
+  const [humoSecondsLeft, setHumoSecondsLeft] = useState(0);
+  const [humoStatus, setHumoStatus] = useState<string>("pending");
+  const [humoPollTimer, setHumoPollTimer] = useState<NodeJS.Timeout | null>(null);
+  const [humoCountdownTimer, setHumoCountdownTimer] = useState<NodeJS.Timeout | null>(null);
 
   const [tonConnectUI] = useTonConnectUI();
   const wallet = useTonWallet();
@@ -277,6 +296,97 @@ export function AgentPurchaseFlow({
     }
   }, [clickUserAgentId, plan, payerName, payerPhone, paymentComment, receiptUrl, fetchWithAuth, hapticSuccess, track, agentSlug]);
 
+  // ─── HUMO Avto Flow ────────────────────────────────────────
+  const startHumoFlow = useCallback(async () => {
+    haptic("medium");
+    setError(null);
+    setSubmitting(true);
+    try {
+      const quote = await fetchWithAuth(`/api/payments/humo/quote`, {
+        method: "POST",
+        body: JSON.stringify({
+          agent_slug: agentSlug,
+          plan_type: plan,
+        }),
+      });
+      setHumoOrder(quote);
+      setHumoSecondsLeft(quote.ttl_seconds);
+      setHumoStatus("pending");
+      track("purchase_initiated", {
+        agent_slug: agentSlug,
+        plan_type: plan,
+        method: "humo_avto",
+      });
+      setStep("humo_pay");
+
+      // Countdown timer
+      const cTimer = setInterval(() => {
+        setHumoSecondsLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(cTimer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      setHumoCountdownTimer(cTimer);
+
+      // Polling timer (har 5 sekund)
+      const pTimer = setInterval(async () => {
+        try {
+          const status = await fetchWithAuth(`/api/payments/humo/orders/${quote.order_id}`);
+          setHumoStatus(status.status);
+          setHumoSecondsLeft(status.seconds_left);
+
+          if (status.status === "paid") {
+            clearInterval(pTimer);
+            clearInterval(cTimer);
+            hapticSuccess();
+            setStep("success");
+            track("purchase_completed", {
+              agent_slug: agentSlug,
+              plan_type: plan,
+              currency: "UZS",
+              method: "humo_avto",
+            });
+            setTimeout(onSuccess, 2000);
+          } else if (status.status === "expired" || status.status === "cancelled") {
+            clearInterval(pTimer);
+            clearInterval(cTimer);
+            setStep("failed");
+            setError("To'lov muddati tugadi. Qaytadan urinib ko'ring.");
+          }
+        } catch {
+          // network error — polling davom etadi
+        }
+      }, 5000);
+      setHumoPollTimer(pTimer);
+
+    } catch (e: any) {
+      if (e instanceof AuthExpiredError) {
+        setError("Sessiya muddati tugagan. Iltimos mini ilovani qayta oching.");
+        setStep("failed");
+      } else {
+        setError(e?.message || "HUMO to'lovni boshlashda xatolik");
+        setStep("failed");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [agentSlug, plan, fetchWithAuth, haptic, hapticSuccess, track, onSuccess]);
+
+  const cancelHumoOrder = useCallback(async () => {
+    if (!humoOrder) return;
+    try {
+      await fetchWithAuth(`/api/payments/humo/orders/${humoOrder.order_id}/cancel`, {
+        method: "POST",
+      });
+    } catch { /* best effort */ }
+    if (humoPollTimer) clearInterval(humoPollTimer);
+    if (humoCountdownTimer) clearInterval(humoCountdownTimer);
+    setStep("select_method");
+  }, [humoOrder, fetchWithAuth, humoPollTimer, humoCountdownTimer]);
+
   // Chek rasmi yuklash
   const uploadReceipt = useCallback(async (file: File) => {
     setUploadingReceipt(true);
@@ -389,8 +499,10 @@ export function AgentPurchaseFlow({
   useEffect(() => {
     return () => {
       if (pollInterval) clearInterval(pollInterval);
+      if (humoPollTimer) clearInterval(humoPollTimer);
+      if (humoCountdownTimer) clearInterval(humoCountdownTimer);
     };
-  }, [pollInterval]);
+  }, [pollInterval, humoPollTimer, humoCountdownTimer]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0">
@@ -506,6 +618,22 @@ export function AgentPurchaseFlow({
                       <span className="text-xs font-medium text-muted-foreground">{priceSOm.toLocaleString()} so'm</span>
                     </button>
                   )}
+
+                  {/* HUMO Avto — eng tez */}
+                  <button
+                    onClick={() => { setMethod("humo"); haptic("light"); startHumoFlow(); }}
+                    disabled={submitting}
+                    className="w-full flex items-center gap-3 p-4 rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 transition-all active:scale-[0.98] hover:border-amber-500/60 disabled:opacity-60"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600">
+                      <Zap size={20} />
+                    </div>
+                    <div className="text-left flex-1">
+                      <p className="font-semibold text-sm">HUMO / UzCard karta</p>
+                      <p className="text-xs text-muted-foreground">Avtomatik 1-2 daqiqada faollashadi</p>
+                    </div>
+                    <span className="text-xs font-medium text-amber-600">{priceSOm.toLocaleString()} so'm</span>
+                  </button>
                 </div>
 
                 <button onClick={() => setStep("select_plan")} className="w-full py-2 text-sm text-muted-foreground">← Orqaga</button>
@@ -688,6 +816,74 @@ export function AgentPurchaseFlow({
                   className="px-6 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold"
                 >
                   Yopish
+                </button>
+              </motion.div>
+            )}
+
+            {/* HUMO: to'lov sahifasi (karta + summa + countdown) */}
+            {step === "humo_pay" && humoOrder && (
+              <motion.div key="humo_pay" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-600">
+                    <CreditCard size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">HUMO Avto to'lov</h2>
+                    <p className="text-xs text-muted-foreground">Avtomatik — 1-2 daqiqa</p>
+                  </div>
+                </div>
+
+                <Card className="border-amber-500/30 bg-amber-500/5">
+                  <CardContent className="p-4 space-y-3">
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Karta raqami</p>
+                      <p className="text-xl font-mono font-bold tracking-wider select-all">{humoOrder.card_number}</p>
+                      {humoOrder.card_holder_name && (
+                        <p className="text-xs text-muted-foreground mt-1">{humoOrder.card_holder_name}</p>
+                      )}
+                    </div>
+                    <div className="h-px bg-border" />
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Aynan shu summani yuboring</p>
+                      <p className="text-2xl font-bold text-amber-600 select-all">
+                        {Math.round(humoOrder.expected_amount).toLocaleString()} so'm
+                      </p>
+                      {humoOrder.extra_sum > 0 && (
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          (+{humoOrder.extra_sum} so'm aniqlik uchun qo'shilgan — hisobingizga o'tadi)
+                        </p>
+                      )}
+                    </div>
+                    <div className="h-px bg-border" />
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">Qolgan vaqt</span>
+                      <span className={`text-sm font-mono font-bold ${humoSecondsLeft < 60 ? 'text-red-500' : 'text-amber-600'}`}>
+                        {Math.floor(humoSecondsLeft / 60)}:{String(humoSecondsLeft % 60).padStart(2, '0')}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>📋 <b>Qadamlar:</b></p>
+                  <p>1. Karta raqamdan nusxa oling</p>
+                  <p>2. Summadan nusxa oling (aniq shu summani!)</p>
+                  <p>3. HUMO/UzCard ilovasi orqali pul o'tkazing</p>
+                  <p>4. To'lov avtomatik tasdiqlanadi (1-2 daq)</p>
+                </div>
+
+                {humoStatus === "pending" && humoSecondsLeft > 0 && (
+                  <div className="flex items-center justify-center gap-2 text-xs text-amber-600">
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>To'lov kutilmoqda...</span>
+                  </div>
+                )}
+
+                <button
+                  onClick={cancelHumoOrder}
+                  className="w-full py-2 text-sm text-muted-foreground"
+                >
+                  ← Bekor qilish
                 </button>
               </motion.div>
             )}
