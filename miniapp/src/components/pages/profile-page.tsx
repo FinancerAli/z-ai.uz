@@ -31,6 +31,7 @@ interface ProfilePageProps {
     last_name?: string;
     username?: string;
     photo_url?: string;
+    is_admin?: boolean;
   };
   onNav?: (t: Tab) => void;
   haptic: (t?: "light" | "medium" | "heavy") => void;
@@ -123,8 +124,9 @@ export function ProfilePage({
             <SubscriptionBadge plan={subPlan as any} daysLeft={trialDaysLeft} />
           </div>
 
-          {/* ADMIN BUTTON */}
-          {(user?.id === 963810115 || user?.id === 1866763435) && (
+          {/* ADMIN BUTTON — backend `is_admin` flagiga asoslanadi (super admin
+              env'dagi ADMIN_TELEGRAM_ID asosida auth.py'da hisoblab chiqiladi). */}
+          {user?.is_admin && (
             <Button
               variant="outline"
               size="sm"

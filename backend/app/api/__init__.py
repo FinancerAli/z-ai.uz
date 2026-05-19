@@ -7,6 +7,7 @@ from app.api.agents import router as agents_router
 from app.api.tasks import router as tasks_router
 from app.api.admin import router as admin_router
 from app.api.payments import router as payments_router
+from app.api.humo_avto import router as humo_router
 from app.api.notifications import router as notifications_router
 from app.api.referral import router as referral_router
 from app.api.feedback import router as feedback_router
@@ -24,6 +25,7 @@ router.include_router(agents_router)
 router.include_router(tasks_router)
 router.include_router(admin_router)
 router.include_router(payments_router)
+router.include_router(humo_router)
 router.include_router(notifications_router)
 router.include_router(referral_router)
 router.include_router(feedback_router)
